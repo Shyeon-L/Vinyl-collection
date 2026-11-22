@@ -166,6 +166,34 @@ footer{position:relative;z-index:1;text-align:center;color:var(--dim);font-size:
 .seg button{padding:5px 11px;border-radius:999px;font-size:11px;color:var(--muted)}
 .seg button[aria-pressed="true"]{background:rgba(226,178,104,.2);color:#f6dcb3}
 
+/* lyrics translation (한 줄 번역) */
+.tr-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 13px}
+.tr-btn{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;
+  border:1px solid rgba(124,201,189,.32);background:rgba(124,201,189,.07);color:#a9d8cf;
+  font-size:12px;font-weight:700;letter-spacing:.01em;transition:.16s}
+.tr-btn:hover{background:rgba(124,201,189,.13)}
+.tr-btn .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.45;transition:.16s}
+.tr-btn[aria-pressed="true"]{background:rgba(226,178,104,.16);border-color:rgba(226,178,104,.45);color:#f4d9ac}
+.tr-btn[aria-pressed="true"] .dot{opacity:1;box-shadow:0 0 0 3px rgba(226,178,104,.14)}
+.tr-note{display:inline-flex;align-items:center;font-size:11px;color:var(--dim)}
+.tr-note.err{color:#f0a07c}
+.tr-note button{margin-left:7px;color:var(--teal);font-size:11px;text-decoration:underline;text-underline-offset:2px}
+.tr-note .spin{width:12px;height:12px;border-width:2px;margin-right:6px}
+.lyr-body.tr-lines{white-space:normal}
+.lyr-body.tr-lines .ln{padding:0}
+.lyr-body.tr-lines .ln p{margin:0;white-space:pre-wrap}
+.lyr-body.tr-lines .src{font-size:14px;line-height:1.5;color:#e7ded5}
+.lyr-body.tr-lines .ko{font-size:12.5px;line-height:1.5;color:#93c7bd;margin:2px 0 10px;letter-spacing:-.005em}
+.lyr-body.tr-lines .ln:last-child .ko{margin-bottom:0}
+.lyr-body.tr-lines .ln.blank{height:12px}
+.lyr-body.tr-lines .tr-pend{color:var(--dim)}
+.lyr-body.tr-lines.synced .src{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6}
+.lyr-body.tr-lines.synced .ko{font-family:inherit;font-size:12px}
+@media(max-width:620px){
+  .lyr-body.tr-lines .src{font-size:13.5px}
+  .lyr-body.tr-lines .ko{font-size:12.5px;margin-bottom:11px}
+}
+
 /* form */
 .field{margin-bottom:13px}
 .field label{display:block;font-size:11.5px;color:var(--dim);margin-bottom:6px;letter-spacing:.03em;font-weight:600}
@@ -648,24 +676,245 @@ async function openLyrics(a, idx){
   paintLyrics(head, res, a, t);
 }
 
+/* ---------- lyrics translation (한 줄 번역) ---------- */
+const TR_STORE = 'lpCollection.tr.v1';
+const TR_PREF = 'lpCollection.tr.on';
+let trCache = (()=>{ try{ const v = JSON.parse(localStorage.getItem(TR_STORE) || '{}'); return (v && typeof v === 'object') ? v : {}; }catch(e){ return {}; } })();
+function trCacheSave(){
+  try{
+    const keys = Object.keys(trCache);
+    if(keys.length > 100){
+      keys.sort((x,y)=>(trCache[x].at||0)-(trCache[y].at||0)).slice(0,40).forEach(k=>delete trCache[k]);
+    }
+    localStorage.setItem(TR_STORE, JSON.stringify(trCache));
+  }catch(e){}
+}
+let trPref = (()=>{ try{ return localStorage.getItem(TR_PREF) !== '0'; }catch(e){ return true; } })();
+function trPrefSet(on){ trPref = on; try{ localStorage.setItem(TR_PREF, on ? '1' : '0'); }catch(e){} }
+
+function httpJson(url, ms){
+  return (async()=>{
+    try{
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctl && ms ? setTimeout(()=>ctl.abort(), ms) : null;
+      const r = await fetch(url, {headers:{'Accept':'application/json'}, signal: ctl ? ctl.signal : undefined});
+      if(timer) clearTimeout(timer);
+      if(!r.ok) return null;
+      return await r.json();
+    }catch(e){ return null; }
+  })();
+}
+async function gtxText(text, ms){
+  const d = await httpJson('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q='+encodeURIComponent(text), ms || 7000);
+  if(!d || !Array.isArray(d[0])) return null;
+  const s = d[0].map(seg => (seg && seg[0]) ? seg[0] : '').join('');
+  return s || null;
+}
+async function lingvaText(text, ms){
+  const d = await httpJson('https://lingva.ml/api/v1/auto/ko/'+encodeURIComponent(text), ms || 7000);
+  return (d && typeof d.translation === 'string' && d.translation.trim()) ? d.translation : null;
+}
+async function memText(text, ms){
+  const d = await httpJson('https://api.mymemory.translated.net/get?q='+encodeURIComponent(text)+'&langpair=en%7Cko', ms || 7000);
+  const s = d && d.responseData && d.responseData.translatedText;
+  if(!s || /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID/i.test(s)) return null;
+  return s;
+}
+
+function isForeignLyrics(text){
+  const t = String(text || '').replace(/\[[^\]]*\]/g, ' ');
+  const latin = (t.match(/[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/g) || []).length;
+  const hangul = (t.match(/[\uAC00-\uD7A3]/g) || []).length;
+  return latin >= 20 && hangul / (hangul + latin) < 0.15;
+}
+function lyricLines(res, mode, hasSync){
+  if(mode === 'sync' && hasSync){
+    return String(res.synced || '').split(/\r?\n/).map(l=>{
+      const m = l.match(/^\[(\d{1,2}):(\d{2})(?:\.(\d+))?\]\s?(.*)$/);
+      return m ? {ts: String(m[1]).padStart(2,'0') + ':' + m[2], text: (m[4] || '')} : {ts:'', text:l};
+    });
+  }
+  return String(res.plain || '').split(/\r?\n/).map(l=>({ts:'', text:l}));
+}
+const TR_SKIP = /^[\s\-–—.,!?~…'"“”‘’()\[\]{}|*#\/\\:;]+$/;
+async function mapLimit(items, limit, fn){
+  const out = new Array(items.length);
+  let i = 0;
+  const run = async ()=>{ while(i < items.length){ const k = i++; out[k] = await fn(items[k], k); } };
+  await Promise.all(Array.from({length: Math.min(limit, items.length) || 1}, run));
+  return out;
+}
+async function trOneLine(text){
+  let s = await gtxText(text, 6000);
+  if(!s) s = await memText(text, 6000);
+  if(!s) s = await lingvaText(text, 6000);
+  return s ? String(s).replace(/\s*\n\s*/g, ' ').trim() : '';
+}
+async function trChunk(text){
+  let s = await gtxText(text, 8000);
+  if(!s) s = await lingvaText(text, 8000);
+  return s;
+}
+/* 번역은 줄 단위 1:1로 맞춘다: 짧은 배치로 묶어 보내되 결과 줄 수가 원문과 같을 때만 채택하고,
+   다르면 줄마다 개별 요청으로 다시 받는다. 빈 줄은 번역하지 않고 그대로 둔다. */
+async function translateLines(lines, onBatch){
+  const idx = [], src = [];
+  lines.forEach((ln, i)=>{
+    const s = String((ln.text == null ? '' : ln.text)).trim();
+    if(s && !TR_SKIP.test(s)){ idx.push(i); src.push(s); }
+  });
+  const out = lines.map(()=> '');
+  if(!src.length) return {lines: out, fails: 0};
+
+  const batches = [];
+  let cur = [], size = 0;
+  src.forEach((s, i)=>{
+    if(cur.length && (size + s.length > 800 || cur.length >= 8)){ batches.push(cur); cur = []; size = 0; }
+    cur.push(i); size += s.length + 1;
+  });
+  if(cur.length) batches.push(cur);
+
+  let done = 0, fails = 0;
+  for(const b of batches){
+    let vals = null;
+    if(b.length > 1){
+      const whole = await trChunk(b.map(i=>src[i]).join('\n'));
+      if(whole){
+        const parts = String(whole).split(/\r?\n/).map(s=>s.trim());
+        if(parts.length === b.length) vals = parts;
+      }
+    }
+    if(!vals) vals = await mapLimit(b, 3, i => trOneLine(src[i]));
+    const filled = [];
+    b.forEach((k, j)=>{
+      const v = String(vals[j] == null ? '' : vals[j]).trim();
+      if(!v) fails++;
+      out[idx[k]] = v;
+      filled.push([idx[k], v]);
+    });
+    done += b.length;
+    if(onBatch) onBatch(filled, done, src.length);
+  }
+  return {lines: out, fails: fails};
+}
+
+function trBarHTML(on, busy, failed, progress){
+  let note = '';
+  if(busy) note = '<span class="tr-note"><span class="spin"></span>' + esc(progress || '번역 중…') + '</span>';
+  else if(failed) note = '<span class="tr-note err">번역을 불러오지 못했어요<button id="trRetry" type="button">다시 시도</button></span>';
+  return '<div class="tr-bar">'
+    + '<button id="trBtn" class="tr-btn" type="button" aria-pressed="' + (on ? 'true' : 'false') + '">'
+    +   '<span class="dot"></span>한국어 한줄 번역</button>'
+    + note
+    + '</div>';
+}
+function trLinesHTML(lines, tr, synced, done){
+  const rows = lines.map((ln, i)=>{
+    const txt = (ln.text == null ? '' : String(ln.text));
+    const ts = ln.ts ? '<span class="ts">' + esc(ln.ts) + '</span>' : '';
+    if(!txt.trim()) return '<div class="ln blank">' + (ln.ts ? ts : '') + '</div>';
+    const ko = (tr && tr[i]) ? esc(tr[i]) : '<span class="tr-pend">' + (done ? '—' : '…') + '</span>';
+    return '<div class="ln">'
+      + '<p class="src">' + ts + esc(txt) + '</p>'
+      + '<p class="ko" data-ko="' + i + '">' + ko + '</p>'
+      + '</div>';
+  }).join('');
+  return '<div class="lyr-body tr-lines' + (synced ? ' synced' : '') + '">' + rows + '</div>';
+}
+function lyrFootHTML(hasSync, mode, res, t){
+  return '<div class="lyr-foot">'
+    + (hasSync ? '<span class="seg"><button data-m="plain" aria-pressed="'+(mode==='plain')+'">가사만</button><button data-m="sync" aria-pressed="'+(mode==='sync')+'">타임코드</button></span>' : '')
+    + '<span class="sp"></span>'
+    + '<span>출처 '+esc(res.source||'')+'</span>'
+    + '<a href="https://lrclib.net/search/'+encodeURIComponent(t.name)+'" target="_blank" rel="noopener">LRCLIB에서 보기</a>'
+    + '</div>';
+}
+
 function paintLyrics(head, res, a, t){
   if(res.status === 'ok'){
     const hasSync = !!(res.synced && /\[\d{1,2}:\d{2}/.test(res.synced));
+    const foreign = isForeignLyrics(res.plain || res.synced || '');
     let mode = 'plain';
-    const draw = ()=>{
-      const body = (mode==='sync' && hasSync) ? syncedHTML(res.synced) : '<div class="lyr-body">'+esc(res.plain)+'</div>';
-      $('#lBody').innerHTML = head + body
-        + '<div class="lyr-foot">'
-        + (hasSync ? '<span class="seg"><button data-m="plain" aria-pressed="'+(mode==='plain')+'">가사만</button><button data-m="sync" aria-pressed="'+(mode==='sync')+'">타임코드</button></span>' : '')
-        + '<span class="sp"></span>'
-        + '<span>출처 '+esc(res.source||'')+'</span>'
-        + '<a href="https://lrclib.net/search/'+encodeURIComponent(t.name)+'" target="_blank" rel="noopener">LRCLIB에서 보기</a>'
-        + '</div>';
-      $('#lBody').querySelectorAll('[data-m]').forEach(b=>{
-        b.onclick = ()=>{ mode = b.dataset.m; draw(); };
-      });
+    let trOn = foreign && trPref;
+    let tr = null, busy = false, failed = false, progress = '';
+    const keyOf = m => cacheKey(a, t) + '|' + m;
+    const linesOf = m => lyricLines(res, m, hasSync);
+    const stored = m => {
+      const c = trCache[keyOf(m)];
+      if(!c || !Array.isArray(c.lines)) return null;
+      return c.lines.length === linesOf(m).length ? c.lines : null;
     };
+
+    const draw = ()=>{
+      const box = $('#lBody .lyr-body');
+      const keep = box ? box.scrollTop : 0;
+      const L = linesOf(mode);
+      if(trOn && !tr) tr = stored(mode);
+      let body;
+      if(trOn && tr) body = trLinesHTML(L, tr, mode === 'sync' && hasSync, true);
+      else if(mode === 'sync' && hasSync) body = syncedHTML(res.synced);
+      else body = '<div class="lyr-body">'+esc(res.plain)+'</div>';
+      $('#lBody').innerHTML = head
+        + (foreign ? trBarHTML(trOn, busy, failed, progress) : '')
+        + body
+        + lyrFootHTML(hasSync, mode, res, t);
+
+      const btn = $('#trBtn');
+      if(btn) btn.onclick = ()=>{
+        trOn = !trOn; trPrefSet(trOn); failed = false; progress = '';
+        if(!trOn) tr = null;
+        draw();
+        if(trOn) ensure();
+      };
+      const retry = $('#trRetry');
+      if(retry) retry.onclick = ()=>{ failed = false; draw(); ensure(); };
+      $('#lBody').querySelectorAll('[data-m]').forEach(b=>{
+        b.onclick = ()=>{
+          if(b.dataset.m === mode) return;
+          mode = b.dataset.m; tr = null; failed = false; progress = '';
+          draw();
+          if(trOn) ensure();
+        };
+      });
+      const nb = $('#lBody .tr-lines');
+      if(nb && keep) nb.scrollTop = keep;
+    };
+
+    async function ensure(){
+      if(!trOn || busy || tr) return;
+      const m = mode, L = linesOf(m);
+      const hit = stored(m);
+      if(hit){ tr = hit; draw(); return; }
+      busy = true; failed = false; progress = '번역 중…';
+      draw();
+      const r = await translateLines(L, (filled, doneN, total)=>{
+        if(m !== mode) return;
+        const body = $('#lBody');
+        if(body) filled.forEach(([i, v])=>{
+          const el = body.querySelector('[data-ko="' + i + '"]');
+          if(el) el.textContent = v || '';
+        });
+        progress = '번역 중… ' + doneN + '/' + total;
+        const n = $('#trNote');
+        if(n) n.innerHTML = '<span class="spin"></span>' + esc(progress);
+      });
+      busy = false;
+      if(r.lines.some(v=>v)){
+        trCache[keyOf(m)] = {at: Date.now(), lines: r.lines};
+        trCacheSave();
+      }
+      if(m !== mode) return;
+      progress = '';
+      if(r.lines.some(v=>v)){
+        tr = r.lines; failed = false;
+      } else {
+        tr = null; failed = true;
+      }
+      draw();
+    }
+
     draw();
+    if(trOn) ensure();
   } else if(res.status === 'instrumental'){
     $('#lBody').innerHTML = head
       + '<div class="lyr-state">LRCLIB에는 이 곡이 <b>연주곡</b>으로 등록되어 있어 가사가 없습니다.</div>'
