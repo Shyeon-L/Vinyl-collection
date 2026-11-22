@@ -851,7 +851,7 @@ function paintLyrics(head, res, a, t){
       const L = linesOf(mode);
       if(trOn && !tr) tr = stored(mode);
       let body;
-      if(trOn && tr) body = trLinesHTML(L, tr, mode === 'sync' && hasSync, true);
+      if(trOn && (tr || !failed)) body = trLinesHTML(L, tr, mode === 'sync' && hasSync, !!tr);
       else if(mode === 'sync' && hasSync) body = syncedHTML(res.synced);
       else body = '<div class="lyr-body">'+esc(res.plain)+'</div>';
       $('#lBody').innerHTML = head
