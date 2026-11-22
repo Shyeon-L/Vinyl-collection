@@ -1,5 +1,5 @@
 /* LP 컬렉션 — offline shell. Network first, cache as fallback, so updates show up immediately. */
-const CACHE = 'lp-collection-v13';
+const CACHE = 'lp-collection-v14';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
