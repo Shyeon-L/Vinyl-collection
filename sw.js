@@ -1,5 +1,5 @@
 /* LP 컬렉션 — offline shell. Network first, cache as fallback, so updates show up immediately. */
-const CACHE = 'lp-collection-v11';
+const CACHE = 'lp-collection-v12';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -20,8 +20,9 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // lyrics APIs etc. go straight to the network
 
+  // GitHub Pages는 최대 10분간 HTTP 캐시를 물고 있을 수 있어, 항상 서버에 새로 확인한다.
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res && res.ok) {
           const copy = res.clone();

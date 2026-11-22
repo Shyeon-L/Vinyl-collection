@@ -393,6 +393,10 @@ function fixGenre(g){
 }
 const STORE = 'lpCollection.v3';
 const BASE_IDS = new Set(DATA.map(a=>a.id));
+/* 서버에서 공식 보완한 앨범들 — 이 기기에 남은 예전 수정본/삭제 기록을 한 번 걷어낸다 */
+const DATA_REV = '20261122-v12';
+const DATA_REV_IDS = ['kim-jong-seo-vol1', 'lee-moon-sae-vol4', 'yoo-jaeha-sarang', 'byun-jin-sub-vol1',
+  'seotaiji-and-boys-vol1', 'kenny-rogers-greatest-hits', 'patti-kim-sarang-gasina-musae', 'mraz-yes-deluxe'];
 const ko = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
 
 /* ---------- state ---------- */
@@ -400,9 +404,9 @@ let state = loadState();
 function loadState(){
   try{
     const s = JSON.parse(localStorage.getItem(STORE) || 'null');
-    if(s && s.v === 3) return Object.assign({v:3, added:[], overrides:{}, deleted:[], lyrics:{}}, s);
+    if(s && s.v === 3) return Object.assign({v:3, added:[], overrides:{}, deleted:[], lyrics:{}, dataRev:null}, s);
   }catch(e){}
-  return {v:3, added:[], overrides:{}, deleted:[], lyrics:{}};
+  return {v:3, added:[], overrides:{}, deleted:[], lyrics:{}, dataRev:null};
 }
 /* 이 기기에 저장된 예전 장르 표기를 한 번 정리한다 ('미분류' → 기타) */
 function migrateGenres(st){
@@ -417,10 +421,25 @@ function migrateGenres(st){
   Object.keys(st.overrides || {}).forEach(k => fix(st.overrides[k]));
   return dirty;
 }
+/* 앱 화면에서 예전에 손댄 흔적(수정본·삭제)이 서버의 최신 정보를 가리지 않게, 데이터 리비전이 바뀔 때 한 번만 정리한다.
+   사용자가 직접 추가한 앨범(state.added)과 그 밖의 앨범 수정본은 그대로 둔다. */
+function migrateDataRev(st){
+  if(st.dataRev === DATA_REV) return false;
+  if(!Array.isArray(st.deleted)) st.deleted = [];
+  if(!st.overrides || typeof st.overrides !== 'object') st.overrides = {};
+  DATA_REV_IDS.forEach(id => {
+    if(Object.prototype.hasOwnProperty.call(st.overrides, id)) delete st.overrides[id];
+    let i = st.deleted.indexOf(id);
+    while(i >= 0){ st.deleted.splice(i, 1); i = st.deleted.indexOf(id); }
+  });
+  st.dataRev = DATA_REV;
+  return true;
+}
 let storageOK = true;
 try{ localStorage.setItem('__probe','1'); localStorage.removeItem('__probe'); }catch(e){ storageOK = false; }
 let warnedStorage = false;
 try{ if(migrateGenres(state)) saveState(); }catch(e){}
+try{ if(migrateDataRev(state)) saveState(); }catch(e){}
 function saveState(){
   if(!storageOK){
     if(!warnedStorage){ warnedStorage = true; toast('이 환경은 자동 저장을 막아요 · ⋯ → JSON 내보내기로 보관하세요'); }
@@ -1284,7 +1303,7 @@ $('#importFile').addEventListener('change', e=>{
         }
       });
       const keep = new Set(inc.map(a=>a.id));
-      state = {v:3, added:added, overrides:overrides, deleted: DATA.map(a=>a.id).filter(id=>!keep.has(id)), lyrics: state.lyrics};
+      state = {v:3, added:added, overrides:overrides, deleted: DATA.map(a=>a.id).filter(id=>!keep.has(id)), lyrics: state.lyrics, dataRev: state.dataRev || DATA_REV};
       saveState(); render();
       toast(inc.length + '장을 가져왔어요');
     }catch(err){ toast('JSON 파일을 읽지 못했어요'); }
@@ -1299,7 +1318,7 @@ $('#mReset').onclick = ()=>{
     setTimeout(()=>{ delete b.dataset.arm; b.textContent = '변경 내용 초기화'; }, 3200);
     return;
   }
-  state = {v:3, added:[], overrides:{}, deleted:[], lyrics:{}};
+  state = {v:3, added:[], overrides:{}, deleted:[], lyrics:{}, dataRev:DATA_REV};
   saveState(); render(); toast('처음 상태로 돌아갔어요');
 };
 
@@ -1307,6 +1326,6 @@ $('#mReset').onclick = ()=>{
 render();
 })();
 </script>
-<script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}</script>
+<script>if('serviceWorker' in navigator){var swReloaded=false,swHadController=!!navigator.serviceWorker.controller;addEventListener('load',function(){navigator.serviceWorker.register('sw.js').then(function(r){return r.update().catch(function(){})}).catch(function(){});navigator.serviceWorker.addEventListener('controllerchange',function(){if(!swHadController||swReloaded)return;swReloaded=true;location.reload()})})}</script>
 </body>
 </html>
