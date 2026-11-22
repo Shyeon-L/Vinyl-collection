@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><title>기기 상태 시뮬레이션</title>
+<body style="font-family:sans-serif;padding:24px">
+<h1>기기 상태 시뮬레이션</h1>
+<p id="out">…</p>
+<pre id="state" style="white-space:pre-wrap;background:#f4f4f4;padding:12px"></pre>
+<p><a href="../">LP 컬렉션 열기</a></p>
+<script>
+var stale = {
+  v: 3,
+  added: [{id:'user-lp-test', artist:'테스트가수', album:'내가 추가한 LP', genre:'kayo', year:2020, tracks:[], unknown:false}],
+  overrides: {
+    'kim-jong-seo-vol1': {album:'정규 1집 (예전 기기 수정본)', tracks:[{no:1,disc:1,name:'Old Track',sec:200}]},
+    'adele-21': {album:'내가 고친 21', tracks:[{no:1,disc:1,name:'A',sec:100},{no:2,disc:1,name:'B',sec:100},{no:3,disc:1,name:'C',sec:100}]}
+  },
+  deleted: ['kim-jong-seo-vol1', 'byun-jin-sub-vol1'],
+  lyrics: {}
+};
+try {
+  localStorage.setItem('lpCollection.v3', JSON.stringify(stale));
+  document.getElementById('out').textContent = '가짜 기기 상태를 저장했어요 (dataRev 없음).';
+} catch (e) {
+  document.getElementById('out').textContent = '저장 실패: ' + e.message;
+}
+document.getElementById('state').textContent = localStorage.getItem('lpCollection.v3') || '(없음)';
+</script>
