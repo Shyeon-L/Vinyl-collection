@@ -372,12 +372,25 @@ const GENRES = [
   {id:'all', name:'전체'},
   {id:'rock', name:'록 · 얼터너티브'},
   {id:'pop', name:'팝 · R&B'},
+  {id:'kayo', name:'가요'},
   {id:'electronic', name:'일렉트로닉 · 힙합'},
   {id:'indie', name:'인디 · 포크'},
   {id:'ost', name:'OST'},
-  {id:'unknown', name:'미분류'}
+  {id:'unknown', name:'기타'}
 ];
 const GENRE_NAME = id => (GENRES.find(g=>g.id===id)||{name:'기타'}).name;
+const GENRE_IDS = new Set(GENRES.map(g=>g.id));
+/* 예전 저장분의 표기(미분류/기타/가요)와 잘못된 id를 지금 쓰는 id로 맞춘다 */
+const GENRE_ALIAS = {'미분류':'unknown', '기타':'unknown', '가요':'kayo',
+  'kayo':'kayo', 'korean':'kayo', 'k-pop':'kayo', 'kpop':'kayo',
+  'other':'unknown', 'etc':'unknown', 'etcetera':'unknown'};
+function fixGenre(g){
+  const v = String(g == null ? '' : g).trim();
+  if(!v) return 'unknown';
+  const hit = GENRE_ALIAS[v] || GENRE_ALIAS[v.toLowerCase()];
+  if(hit) return hit;
+  return GENRE_IDS.has(v) ? v : 'unknown';
+}
 const STORE = 'lpCollection.v3';
 const BASE_IDS = new Set(DATA.map(a=>a.id));
 const ko = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
@@ -391,9 +404,23 @@ function loadState(){
   }catch(e){}
   return {v:3, added:[], overrides:{}, deleted:[], lyrics:{}};
 }
+/* 이 기기에 저장된 예전 장르 표기를 한 번 정리한다 ('미분류' → 기타) */
+function migrateGenres(st){
+  let dirty = false;
+  const fix = a => {
+    if(a && typeof a === 'object' && 'genre' in a){
+      const g = fixGenre(a.genre);
+      if(g !== a.genre){ a.genre = g; dirty = true; }
+    }
+  };
+  (st.added || []).forEach(fix);
+  Object.keys(st.overrides || {}).forEach(k => fix(st.overrides[k]));
+  return dirty;
+}
 let storageOK = true;
 try{ localStorage.setItem('__probe','1'); localStorage.removeItem('__probe'); }catch(e){ storageOK = false; }
 let warnedStorage = false;
+try{ if(migrateGenres(state)) saveState(); }catch(e){}
 function saveState(){
   if(!storageOK){
     if(!warnedStorage){ warnedStorage = true; toast('이 환경은 자동 저장을 막아요 · ⋯ → JSON 내보내기로 보관하세요'); }
@@ -405,7 +432,10 @@ function saveState(){
 function library(){
   const base = DATA.filter(a=>state.deleted.indexOf(a.id) < 0)
                    .map(a=> state.overrides[a.id] ? Object.assign({}, a, state.overrides[a.id]) : a);
-  return base.concat(state.added);
+  return base.concat(state.added).map(a=>{
+    const g = fixGenre(a.genre);
+    return g === a.genre ? a : Object.assign({}, a, {genre:g});
+  });
 }
 
 /* ---------- helpers ---------- */
@@ -946,7 +976,7 @@ function openForm(album){
   $('#fHead').textContent = album ? 'LP 수정' : 'LP 추가';
   $('#fArtist').value = album ? (album.artist||'') : '';
   $('#fAlbum').value = album ? ((album.unknown ? '' : album.album)||'') : '';
-  $('#fGenre').value = album && album.genre ? album.genre : 'rock';
+  $('#fGenre').value = album && album.genre ? fixGenre(album.genre) : 'rock';
   $('#fYear').value = album && album.year ? album.year : '';
   $('#fNote').value = album && !album.unknown ? (album.note||'') : '';
   $('#fTracks').value = album ? album.tracks.map(t=> t.name + (t.sec ? ' | ' + fmtTime(t.sec) : '')).join('\n') : '';
@@ -1016,7 +1046,7 @@ $('#lpForm').addEventListener('submit', e=>{
   const patch = {
     artist: artist,
     album: album,
-    genre: $('#fGenre').value || 'rock',
+    genre: fixGenre($('#fGenre').value),
     year: parseInt($('#fYear').value,10) || null,
     note: $('#fNote').value.trim(),
     cover: pendingCover || (editing && editing.cover) || null,
@@ -1088,8 +1118,9 @@ $('#qClear').onclick = ()=>{ $('#q').value=''; view.q=''; $('#searchWrap').class
 $('#sort').addEventListener('change', e=>{ view.sort = e.target.value; render(); });
 $('#addBtn').onclick = ()=> openForm(null);
 
+/* 장르 선택 목록은 GENRES 하나에서만 만든다 (중복 option 생기지 않게) */
 $('#fGenre').innerHTML = GENRES.filter(g=>g.id!=='all')
-  .map(g=>'<option value="'+g.id+'">'+esc(g.name)+'</option>').join('') + '<option value="unknown">미분류</option>';
+  .map(g=>'<option value="'+g.id+'">'+esc(g.name)+'</option>').join('');
 
 /* menu */
 const menu = $('#menu');
